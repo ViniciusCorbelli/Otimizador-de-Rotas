@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>Otimizar rotas</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <script src="https://polyfill.io/v3/polyfill.min.js?features=default"></script>
+  <script src="https://ajax.googleapis.com/ajax/libs/handlebars/4.7.7/handlebars.min.js"></script>
+  <link href="https://fonts.googleapis.com/css?family=Roboto" rel="stylesheet">
+  <link href="style.css" rel="stylesheet">
+
+  <script>
+    'use strict';
+
+    function hideElement(el) {
+      el.style.display = 'none';
+    }
+
+    function showElement(el) {
+      el.style.display = 'block';
+    }
+
+    function generateDirectionsURL(origin, destination) {
+      const googleMapsUrlBase = 'https://www.google.com/maps/dir/?';
+      const searchParams = new URLSearchParams('api=1');
+      searchParams.append('origin', origin);
+      const destinationParam = [];
+      if (destination.title !== destination.address1) {
+        destinationParam.push(destination.title);
+      }
+      destinationParam.push(destination.address1, destination.address2);
+      searchParams.append('destination', destinationParam.join(','));
+      return googleMapsUrlBase + searchParams.toString();
+    }
+
+    function LocatorPlus(configuration) {
+      const locator = this;
+
+      locator.locations = configuration.locations || [];
+      locator.capabilities = configuration.capabilities || {};
+
+      const mapEl = document.getElementById('gmp-map');
+      const panelEl = document.getElementById('locations-panel');
+      locator.panelListEl = document.getElementById('locations-panel-list');
+      const sectionNameEl =
+        document.getElementById('location-results-section-name');
+      const resultsContainerEl = document.getElementById('location-results-list');
+
+      const itemsTemplate = Handlebars.compile(
+        document.getElementById('locator-result-items-tmpl').innerHTML);
+
+      locator.searchLocation = null;
+      locator.searchLocationMarker = null;
+      locator.selectedLocationIdx = null;
+      locator.userCountry = null;
+
+      locator.map = new google.maps.Map(mapEl, configuration.mapOptions);
+
+      const selectResultItem = function (locationIdx, panToMarker, scrollToResult) {
+        locator.selectedLocationIdx = locationIdx;
+        for (let locationElem of resultsContainerEl.children) {
+          locationElem.classList.remove('selected');
+          if (getResultIndex(locationElem) === locator.selectedLocationIdx) {
+            locationElem.classList.add('selected');
+            if (scrollToResult) {
+              panelEl.scrollTop = locationElem.offsetTop;
+            }
+          }
+        }
+        if (panToMarker && (locationIdx != null)) {
+          locator.map.panTo(locator.locations[locationIdx].coords);
+        }
+      };
+
+      locator.updateBounds = function () {
+        const bounds = new google.maps.LatLngBounds();
+        if (locator.searchLocationMarker) {
+          bounds.extend(locator.searchLocationMarker.getPosition());
+        }
+        locator.map.fitBounds(bounds);
+      };
+      if (locator.locations.length) {
+        locator.updateBounds();
+      }
+
+      const getLocationDistance = function (location) {
+        if (!locator.searchLocation) return null;
+
+        if (location.travelDistanceValue != null) {
+          return location.travelDistanceValue;
+        }
+
+        return google.maps.geometry.spherical.computeDistanceBetween(
+          new google.maps.LatLng(location.coords),
+          locator.searchLocation.location);
+      };
+
+      const getResultIndex = function (elem) {
+        return parseInt(elem.getAttribute('data-location-index'));
+      };
+
+      locator.renderResultsList = function () {
+        let locations = locator.locations.slice();
+        for (let i = 0; i < locations.length; i++) {
+          locations[i].index = i;
+        }
+        sectionNameEl.textContent = `Pontos (${locations.length})`;
+        const resultItemContext = { locations: locations };
+        resultsContainerEl.innerHTML = itemsTemplate(resultItemContext);
+        for (let item of resultsContainerEl.children) {
+          const resultIndex = getResultIndex(item);
+          if (resultIndex === locator.selectedLocationIdx) {
+            item.classList.add('selected');
+          }
+
+          const resultSelectionHandler = function () {
+            if (resultIndex !== locator.selectedLocationIdx) {
+              selectResultItem(resultIndex, true, false);
+            }
+          };
+
+          item.addEventListener('click', resultSelectionHandler);
+          item.querySelector('.select-location')
+            .addEventListener('click', function (e) {
+              resultSelectionHandler();
+              e.stopPropagation();
+            });
+
+          item.querySelectorAll('.dropdown-container').forEach((containerEl) => {
+            const dropdownEl = containerEl.querySelector('.action-dropdown');
+            const dropdownToggleEl =
+              containerEl.querySelector('.action-dropdown-toggle');
+            dropdownToggleEl.addEventListener('click', function (e) {
+              if (locator.openDropdownEl) {
+                hideElement(locator.openDropdownEl);
+                if (locator.openDropdownEl === dropdownEl) {
+                  locator.openDropdownEl = undefined;
+                  return;
+                }
+              }
+              showElement(dropdownEl);
+              locator.openDropdownEl = dropdownEl;
+            });
+          });
+
+          const origin = (locator.searchLocation != null) ?
+            locator.searchLocation.location :
+            '';
+          const destination = locator.locations[resultIndex];
+          const googleMapsUrl = generateDirectionsURL(origin, destination);
+        }
+      };
+
+      window.addEventListener('click', function (e) {
+        if (locator.openDropdownEl && !locator.openDropdownEl.parentNode.contains(e.target)) {
+          hideElement(locator.openDropdownEl);
+          locator.openDropdownEl = undefined;
+        }
+      });
+
+      initializeSearchInput(locator);
+      initializeDistanceMatrix(locator);
+
+      locator.renderResultsList();
+    }
+
+    function initializeSearchInput(locator) {
+      const geocodeCache = new Map();
+      const geocoder = new google.maps.Geocoder();
+
+      const searchInputEl = document.getElementById('location-search-input');
+      const searchButtonEl = document.getElementById('location-search-button');
+
+      const updateSearchLocation = function (address, location) {
+        if (locator.searchLocationMarker) {
+          locator.searchLocationMarker.setMap(null);
+        }
+        if (!location) {
+          locator.searchLocation = null;
+          return;
+        }
+        locator.searchLocation = { 'address': address, 'location': location };
+        locator.searchLocationMarker = new google.maps.Marker({
+          position: location,
+          map: locator.map,
+          title: 'Minha localização',
+          icon: {
+            path: google.maps.SymbolPath.CIRCLE,
+            scale: 12,
+            fillColor: '#3367D6',
+            fillOpacity: 0.5,
+            strokeOpacity: 0,
+          }
+        });
+
+        const addressParts = address.split(' ');
+        locator.userCountry = addressParts[addressParts.length - 1];
+
+        locator.updateBounds();
+
+        locator.renderResultsList();
+
+        locator.updateTravelTimes();
+      };
+
+      const geocodeSearch = function (query) {
+        if (!query) {
+          return;
+        }
+
+        const handleResult = function (geocodeResult) {
+          searchInputEl.value = geocodeResult.formatted_address;
+
+          var loc = {"title":geocodeResult['formatted_address'],"address1":geocodeResult['address_components'][1]['long_name'],"address2":geocodeResult['address_components'][2]['long_name'],"coords":{"lat":geocodeResult['geometry']['viewport']['vb']['lo'],"lng":geocodeResult['geometry']['viewport']['Ra']['lo']},"placeId":geocodeResult['placeId']};
+          CONFIGURATION['locations'].unshift(loc);
+
+          var markers = locator.locations.map(function (location, index) {
+            const marker = new google.maps.Marker({
+              position: location.coords,
+              map: locator.map,
+              title: location.title,
+            });
+            marker.addListener('click', function () {
+              selectResultItem(index, false, true);
+            });
+            return marker;
+          });
+
+          updateSearchLocation(
+            geocodeResult.formatted_address, geocodeResult.geometry.location);
+        };
+
+        if (geocodeCache.has(query)) {
+          handleResult(geocodeCache.get(query));
+          return;
+        }
+        const request = { address: query, bounds: locator.map.getBounds() };
+        geocoder.geocode(request, function (results, status) {
+          if (status === 'OK') {
+            if (results.length > 0) {
+              const result = results[0];
+              geocodeCache.set(query, result);
+              handleResult(result);
+            }
+          }
+        });
+      };
+
+      searchButtonEl.addEventListener('click', function () {
+        geocodeSearch(searchInputEl.value.trim());
+      });
+
+      initializeSearchInputAutocomplete(
+        locator, searchInputEl, geocodeSearch, updateSearchLocation);
+    }
+
+    function initializeSearchInputAutocomplete(
+      locator, searchInputEl, fallbackSearch, searchLocationUpdater) {
+      const autocomplete = new google.maps.places.Autocomplete(searchInputEl, {
+        types: ['geocode'],
+        fields: ['place_id', 'formatted_address', 'geometry.location']
+      });
+      autocomplete.bindTo('bounds', locator.map);
+      autocomplete.addListener('place_changed', function () {
+        const placeResult = autocomplete.getPlace();
+        if (!placeResult.geometry) {
+          fallbackSearch(placeResult.name);
+          return;
+        }
+        searchLocationUpdater(
+          placeResult.formatted_address, placeResult.geometry.location);
+      });
+    }
+
+    function initializeDistanceMatrix(locator) {
+      const distanceMatrixService = new google.maps.DistanceMatrixService();
+
+      locator.updateTravelTimes = function () {
+        if (!locator.searchLocation) return;
+
+        const units = (locator.userCountry === 'USA') ?
+          google.maps.UnitSystem.IMPERIAL :
+          google.maps.UnitSystem.METRIC;
+        const request = {
+          origins: [locator.searchLocation.location],
+          destinations: locator.locations.map(function (x) {
+            return x.coords;
+          }),
+          travelMode: google.maps.TravelMode.DRIVING,
+          unitSystem: units,
+        };
+        const callback = function (response, status) {
+          if (status === 'OK') {
+            const distances = response.rows[0].elements;
+            for (let i = 0; i < distances.length; i++) {
+              const distResult = distances[i];
+              let travelDistanceText, travelDistanceValue;
+              if (distResult.status === 'OK') {
+                travelDistanceText = distResult.distance.text;
+                travelDistanceValue = distResult.distance.value;
+              }
+              const location = locator.locations[i];
+              location.travelDistanceText = travelDistanceText;
+              location.travelDistanceValue = travelDistanceValue;
+            }
+
+            locator.renderResultsList();
+          }
+        };
+        distanceMatrixService.getDistanceMatrix(request, callback);
+      };
+    }
+  </script>
+  <script>
+    var CONFIGURATION = {
+      "locations": [
+      ],
+      "mapOptions": { "center": { "lat": -21.7584609, "lng": -43.3820662 }, "fullscreenControl": true, "mapTypeControl": false, "streetViewControl": false, "zoom": 14, "zoomControl": true, "maxZoom": 17 },
+      "mapsApiKey": "AIzaSyAckaNXf5RFByT03vC8oe9YCfHRp3LTLI4",
+      "capabilities": { "input": true, "autocomplete": true, "directions": false, "distanceMatrix": true, "details": false, "actions": true }
+    };
+
+    function initMap() {
+      new LocatorPlus(CONFIGURATION);
+    }
+
+    function obterRota() {
+      document.body.style.cursor = 'progress';
+
+      var params = {
+        method: 'POST',
+        cache: 'default',
+        headers: {"Content-type": "application/json;charset=UTF-8"},
+        body: JSON.stringify(CONFIGURATION['locations']),
+      };
+
+      fetch('http://localhost:8080/owlapi/webapi/resouce/otimizar', params)
+      .then(response => response.json())
+      .then(json => console.log(json))
+      .catch(err => console.log('Erro de solicitação', err));
+
+      document.body.style.cursor = 'default';
+    }
+
+    function deletarPonto(index) {
+      CONFIGURATION['locations'] = [];
+      CONFIGURATION['locations'].forEach = function(d, i) {
+        if (i != index) {
+          CONFIGURATION['locations'][i] = d;
+        }
+      };
+    }
+
+  </script>
+  <script id="locator-result-items-tmpl" type="text/x-handlebars-template">
+      {{#each locations}}
+        <li class="location-result" data-location-index="{{index}}">
+          <button class="select-location">
+            <h2 class="name">{{title}}</h2>
+          </button>
+          <div class="address">{{address1}}<br>{{address2}}</div>
+          {{#if travelDistanceText}}
+            <div class="distance">{{travelDistanceText}}</div>
+          {{/if}}
+          <div class="delete"><a onclick="deletarPonto({{index}})">x</a></div>
+        </li>
+      {{/each}}
+    </script>
+</head>
+
+<body>
+  <div id="map-container">
+    <div id="locations-panel">
+      <div id="locations-panel-list">
+        <header>
+          <h1 class="search-title">
+            <img src="https://fonts.gstatic.com/s/i/googlematerialicons/place/v15/24px.svg" />
+            Adicione os pontos de paradas
+          </h1>
+          <div class="search-input">
+            <input id="location-search-input" placeholder="Digite o endereço ou o CEP">
+            <div id="search-overlay-search" class="search-input-overlay search">
+              <button id="location-search-button">
+                <img class="icon" src="https://fonts.gstatic.com/s/i/googlematerialicons/search/v11/24px.svg"
+                  alt="Search" />
+              </button>
+            </div>
+          </div>
+        </header>
+        <div class="section-name" id="location-results-section-name">
+          Pontos
+        </div>
+        <div class="results">
+          <ul id="location-results-list"></ul>
+        </div>
+        <a onclick="obterRota()" class="button">Obter rota</a>
+      </div>
+    </div>
+    <div id="gmp-map"></div>
+  </div>
+  <script
+    src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAckaNXf5RFByT03vC8oe9YCfHRp3LTLI4&callback=initMap&libraries=places,geometry&solution_channel=GMP_QB_locatorplus_v6_cABDF"
+    async defer></script>
+</body>
+
+</html>
