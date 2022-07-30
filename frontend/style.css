@@ -173,15 +173,6 @@ body {
 
 #locations-panel-list .location-result .distance {
     position: absolute;
-    top: 3em;
-    right: 0;
-    text-align: center;
-    font-size: 0.9em;
-    width: 5em;
-}
-
-#locations-panel-list .location-result .delete {
-    position: absolute;
     top: 0.9em;
     right: 0;
     text-align: center;
@@ -273,6 +264,14 @@ body {
     list-style-type: none;
     margin: 0;
     padding: 0;
+}
+
+.location-result:first-child {
+    background-color: #d9ffda;;
+}
+
+.location-result:last-child {
+    background-color: #ffd9d9;;
 }
 
 .button {

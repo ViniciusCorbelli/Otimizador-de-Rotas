@@ -9,9 +9,13 @@
   <script src="https://ajax.googleapis.com/ajax/libs/handlebars/4.7.7/handlebars.min.js"></script>
   <link href="https://fonts.googleapis.com/css?family=Roboto" rel="stylesheet">
   <link href="style.css" rel="stylesheet">
+  <script type="text/javascript" src="http://code.jquery.com/jquery-latest.min.js"></script>
 
   <script>
     'use strict';
+
+    var locator = null
+    var distancias = new Array();
 
     function hideElement(el) {
       el.style.display = 'none';
@@ -35,7 +39,7 @@
     }
 
     function LocatorPlus(configuration) {
-      const locator = this;
+      locator = this;
 
       locator.locations = configuration.locations || [];
       locator.capabilities = configuration.capabilities || {};
@@ -184,7 +188,6 @@
         locator.searchLocationMarker = new google.maps.Marker({
           position: location,
           map: locator.map,
-          title: 'Minha localização',
           icon: {
             path: google.maps.SymbolPath.CIRCLE,
             scale: 12,
@@ -212,7 +215,7 @@
         const handleResult = function (geocodeResult) {
           searchInputEl.value = geocodeResult.formatted_address;
 
-          var loc = {"title":geocodeResult['formatted_address'],"address1":geocodeResult['address_components'][1]['long_name'],"address2":geocodeResult['address_components'][2]['long_name'],"coords":{"lat":geocodeResult['geometry']['viewport']['vb']['lo'],"lng":geocodeResult['geometry']['viewport']['Ra']['lo']},"placeId":geocodeResult['placeId']};
+          var loc = { "title": geocodeResult['formatted_address'], "address1": geocodeResult['address_components'][1]['long_name'], "address2": geocodeResult['address_components'][2]['long_name'], "coords": { "lat": ((geocodeResult['geometry']['viewport']['vb']['hi'] + geocodeResult['geometry']['viewport']['vb']['lo']) / 2), "lng": ((geocodeResult['geometry']['viewport']['Sa']['hi'] + geocodeResult['geometry']['viewport']['Sa']['lo']) / 2) }, "placeId": geocodeResult['placeId'] };
           CONFIGURATION['locations'].unshift(loc);
 
           var markers = locator.locations.map(function (location, index) {
@@ -229,6 +232,8 @@
 
           updateSearchLocation(
             geocodeResult.formatted_address, geocodeResult.geometry.location);
+
+          initializeDistanceMatrix(locator);
         };
 
         if (geocodeCache.has(query)) {
@@ -274,14 +279,17 @@
     }
 
     function initializeDistanceMatrix(locator) {
+      distancias = Array();
+
       const distanceMatrixService = new google.maps.DistanceMatrixService();
+
+      const units = (locator.userCountry === 'USA') ?
+        google.maps.UnitSystem.IMPERIAL :
+        google.maps.UnitSystem.METRIC;
 
       locator.updateTravelTimes = function () {
         if (!locator.searchLocation) return;
 
-        const units = (locator.userCountry === 'USA') ?
-          google.maps.UnitSystem.IMPERIAL :
-          google.maps.UnitSystem.METRIC;
         const request = {
           origins: [locator.searchLocation.location],
           destinations: locator.locations.map(function (x) {
@@ -310,7 +318,43 @@
         };
         distanceMatrixService.getDistanceMatrix(request, callback);
       };
+
+      const distanceMatrixServicePontos = new google.maps.DistanceMatrixService();
+      locator.locations.map(function (loc, i) {
+        const request = {
+          origins: [loc.coords],
+          destinations: locator.locations.map(function (x) {
+            return x.coords;
+          }),
+          travelMode: google.maps.TravelMode.DRIVING,
+          unitSystem: units,
+        };
+        const callback = function (response, status) {
+          if (status === 'OK') {
+            const distances = response.rows[0].elements;
+            for (let j = 0; j < distances.length; j++) {
+              const distResult = distances[j];
+              let travelDistanceText, travelDistanceValue;
+              if (distResult.status === 'OK') {
+                travelDistanceValue = distResult.distance.value;
+              }
+
+              let d = {
+                "saida": i,
+                "chegada": j,
+                "distancia": travelDistanceValue,
+              }
+              distancias.push(d);
+
+            }
+          }
+        };
+        distanceMatrixServicePontos.getDistanceMatrix(request, callback);
+      });
+
+
     }
+
   </script>
   <script>
     var CONFIGURATION = {
@@ -328,28 +372,55 @@
     function obterRota() {
       document.body.style.cursor = 'progress';
 
-      var params = {
-        method: 'POST',
-        cache: 'default',
-        headers: {"Content-type": "application/json;charset=UTF-8"},
-        body: JSON.stringify(CONFIGURATION['locations']),
-      };
+      let total = CONFIGURATION['locations'].length;
 
-      fetch('http://localhost:8080/owlapi/webapi/resouce/otimizar', params)
-      .then(response => response.json())
-      .then(json => console.log(json))
-      .catch(err => console.log('Erro de solicitação', err));
+      if (total < 3) {
+        alert('Marque pelo menos 3 pontos no mapa para fazer a otimização.');
+        document.body.style.cursor = 'default';
+        return;
+      }
+
+      let arr = {
+        "total": CONFIGURATION['locations'].length,
+        "distancias": distancias,
+      }
+
+      $.ajax({
+        url: "http://127.0.0.1:8000/otimizar/",
+        method: "POST",
+        data: JSON.stringify(arr)
+      }).done(function (res) {
+        const result = JSON.parse(res.response);
+
+        var service = new google.maps.DirectionsService;
+        var service_callback = function (response, status) {
+          if (status != 'OK') {
+            alert("Ocorreu um erro ao marcar o destino, tente novamente mais tarde.")
+            return;
+          }
+          var renderer = new google.maps.DirectionsRenderer;
+          renderer.setMap(locator.map);
+          renderer.setOptions({ suppressMarkers: true, preserveViewport: true });
+          renderer.setDirections(response);
+        };
+
+        let pontos = Array();
+        for (var i = 0; i < result.length - 1; i++) {
+          var service_options = {
+            origin: CONFIGURATION['locations'][result[i][0]]['coords'],
+            destination: CONFIGURATION['locations'][result[i][1]]['coords'],
+            travelMode: 'WALKING'
+          };
+          pontos[result[i][0]] = result[i][1];
+          service.route(service_options, service_callback);
+        }
+        $("#rota").html('<div class="section-name" id="location-results-section-name">Rota</div>');
+        for (var i = 0; i < pontos.length; i++) {
+          $("#rota").append('<li>' + CONFIGURATION['locations'][result[i][1]]['title'] + '</li><br>');
+        }
+      });
 
       document.body.style.cursor = 'default';
-    }
-
-    function deletarPonto(index) {
-      CONFIGURATION['locations'] = [];
-      CONFIGURATION['locations'].forEach = function(d, i) {
-        if (i != index) {
-          CONFIGURATION['locations'][i] = d;
-        }
-      };
     }
 
   </script>
@@ -363,7 +434,6 @@
           {{#if travelDistanceText}}
             <div class="distance">{{travelDistanceText}}</div>
           {{/if}}
-          <div class="delete"><a onclick="deletarPonto({{index}})">x</a></div>
         </li>
       {{/each}}
     </script>
@@ -388,6 +458,7 @@
             </div>
           </div>
         </header>
+        <div id="rota"></div>
         <div class="section-name" id="location-results-section-name">
           Pontos
         </div>

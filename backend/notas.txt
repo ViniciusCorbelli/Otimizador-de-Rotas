@@ -1,1 +1,0 @@
-heroku war:deploy target/owlapi.war --app whispering-gorge-06411
