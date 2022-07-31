@@ -267,10 +267,18 @@ body {
 }
 
 .location-result:first-child {
-    background-color: #d9ffda;;
+    background-color: #ffd9d9;;
 }
 
 .location-result:last-child {
+    background-color: #d9ffda;;
+}
+
+.finish .location-result:first-child {
+    background-color: #d9ffda;;
+}
+
+.finish .location-result:last-child {
     background-color: #ffd9d9;;
 }
 

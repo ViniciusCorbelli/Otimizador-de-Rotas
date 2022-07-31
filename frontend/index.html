@@ -10,6 +10,7 @@
   <link href="https://fonts.googleapis.com/css?family=Roboto" rel="stylesheet">
   <link href="style.css" rel="stylesheet">
   <script type="text/javascript" src="http://code.jquery.com/jquery-latest.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
   <script>
     'use strict';
@@ -369,14 +370,16 @@
       new LocatorPlus(CONFIGURATION);
     }
 
-    function obterRota() {
-      document.body.style.cursor = 'progress';
+    function getRoute() {
 
       let total = CONFIGURATION['locations'].length;
 
       if (total < 3) {
-        alert('Marque pelo menos 3 pontos no mapa para fazer a otimização.');
-        document.body.style.cursor = 'default';
+        Swal.fire({
+          icon: 'error',
+          title: 'Oops...',
+          text: 'Marque pelo menos 3 pontos no mapa para fazer a otimização.',
+        })
         return;
       }
 
@@ -384,6 +387,20 @@
         "total": CONFIGURATION['locations'].length,
         "distancias": distancias,
       }
+
+      let timerInterval
+      Swal.fire({
+        title: 'Processando...',
+        html: 'Estamos trabalhando para obter a melhor rota.',
+        timer: 2000,
+        timerProgressBar: true,
+        didOpen: () => {
+          Swal.showLoading()
+        },
+        willClose: () => {
+          clearInterval(timerInterval)
+        }
+      })
 
       $.ajax({
         url: "http://127.0.0.1:8000/otimizar/",
@@ -395,7 +412,11 @@
         var service = new google.maps.DirectionsService;
         var service_callback = function (response, status) {
           if (status != 'OK') {
-            alert("Ocorreu um erro ao marcar o destino, tente novamente mais tarde.")
+            Swal.fire({
+              icon: 'error',
+              title: 'Oops...',
+              text: 'Ocorreu um erro ao marcar a rota, tente novamente mais tarde.',
+            })
             return;
           }
           var renderer = new google.maps.DirectionsRenderer;
@@ -405,22 +426,51 @@
         };
 
         let pontos = Array();
-        for (var i = 0; i < result.length - 1; i++) {
+        for (var i = 0; i < result.length; i++) {
+          let origem = result[i][0];
+          let destino = result[i][1];
+
+          // Remove o destino de volta para o ponto inicial
+          if (destino == 0) {
+            destino = total - 1;
+          }
+
+          pontos[origem] = destino;
+
           var service_options = {
-            origin: CONFIGURATION['locations'][result[i][0]]['coords'],
-            destination: CONFIGURATION['locations'][result[i][1]]['coords'],
+            origin: CONFIGURATION['locations'][origem]['coords'],
+            destination: CONFIGURATION['locations'][destino]['coords'],
             travelMode: 'WALKING'
           };
-          pontos[result[i][0]] = result[i][1];
           service.route(service_options, service_callback);
         }
-        $("#rota").html('<div class="section-name" id="location-results-section-name">Rota</div>');
-        for (var i = 0; i < pontos.length; i++) {
-          $("#rota").append('<li>' + CONFIGURATION['locations'][result[i][1]]['title'] + '</li><br>');
-        }
+
+        $(".search-input").html('');
+        $("#location-results-list").html('');
+        $("#get-route-button").remove();
+        $("#location-results-list").addClass('finish');
+        $(".search-title").html('<img src="https://fonts.gstatic.com/s/i/googlematerialicons/place/v15/24px.svg" /> Pontos de paradas');
+
+        writeRota(pontos);
+
+      }).fail(function (res) {
+        Swal.fire({
+          icon: 'error',
+          title: 'Oops...',
+          text: 'Ocorreu um erro com a API do maps, tente novamente mais tarde.',
+        })
       });
 
-      document.body.style.cursor = 'default';
+    }
+
+    function writeRota(pontos, index = 0) {
+      if (CONFIGURATION['locations'][0] && CONFIGURATION['locations'][0]['title']) {
+        $("#location-results-list").prepend('<li class="location-result" data-location-index="' + index + '"><button class="select-location"><h2 class="name">' + CONFIGURATION['locations'][index]['title'] + '</h2></button><div class="address">' + CONFIGURATION['locations'][index]['address1'] + '<br>' + CONFIGURATION['locations'][index]['address2'] + '</div></li>');
+
+        if (pontos[index]) {
+          writeRota(pontos, pontos[index]);
+        }
+      }
     }
 
   </script>
@@ -439,7 +489,7 @@
     </script>
 </head>
 
-<body>
+<body style="height: 100%!important">
   <div id="map-container">
     <div id="locations-panel">
       <div id="locations-panel-list">
@@ -458,14 +508,13 @@
             </div>
           </div>
         </header>
-        <div id="rota"></div>
         <div class="section-name" id="location-results-section-name">
           Pontos
         </div>
         <div class="results">
           <ul id="location-results-list"></ul>
         </div>
-        <a onclick="obterRota()" class="button">Obter rota</a>
+        <a id="get-route-button" onclick="getRoute()" class="button">Obter rota</a>
       </div>
     </div>
     <div id="gmp-map"></div>
