@@ -1,9 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-import numpy as np
 from docplex.mp.model import Model
-import docplex.mp.solution as Solucion
 
 app = FastAPI()
 
@@ -18,6 +16,8 @@ async def otimizar(request : Request):
 
     #Remove o ponto final
     n=int(data['total']-1)
+
+    
     pontos=[i for i in range(n)]
     arcos = [(i,j) for i in pontos for j in pontos if i!=j]
     distancia = {}
@@ -39,16 +39,19 @@ async def otimizar(request : Request):
     mdl.minimize(mdl.sum(distancia[i]*x[i] for i in arcos))
 
     #De cada ponto so sai um arco
+    #Retorna do ponto j para i somento se Xij = 1
     for c in pontos:
         mdl.add_constraint(mdl.sum(x[(i,j)] for i,j in arcos if i==c)==1, 
                         ctname='saida_%d'%c)
 
     #So chega um arco neste ponto
+    #So vai do ponto j para o i se Xij = 1
     for c in pontos:
         mdl.add_constraint(mdl.sum(x[(i,j)] for i,j in arcos if j==c)==1, 
                         ctname='chegada_%d'%c)
     
     #Elimina as subrotas
+    #Ui - Uj + N * Xij <= n -1 (i = 2,...,n, i != j)
     for i,j in arcos:
         if j!=0:
             mdl.add_indicator(x[(i,j)],d[i]+1==d[j], 

@@ -216,7 +216,15 @@
         const handleResult = function (geocodeResult) {
           searchInputEl.value = geocodeResult.formatted_address;
 
-          var loc = { "title": geocodeResult['formatted_address'], "address1": geocodeResult['address_components'][1]['long_name'], "address2": geocodeResult['address_components'][2]['long_name'], "coords": { "lat": ((geocodeResult['geometry']['viewport']['vb']['hi'] + geocodeResult['geometry']['viewport']['vb']['lo']) / 2), "lng": ((geocodeResult['geometry']['viewport']['Sa']['hi'] + geocodeResult['geometry']['viewport']['Sa']['lo']) / 2) }, "placeId": geocodeResult['placeId'] };
+          var loc = { 
+            "title": geocodeResult['formatted_address'], 
+            "address1": geocodeResult['address_components'][1]['long_name'], 
+            "address2": geocodeResult['address_components'][2]['long_name'], 
+            "coords": { 
+              "lat": ((geocodeResult['geometry']['viewport']['ub']['hi'] + geocodeResult['geometry']['viewport']['ub']['lo']) / 2), 
+              "lng": ((geocodeResult['geometry']['viewport']['Ra']['hi'] + geocodeResult['geometry']['viewport']['Ra']['lo']) / 2) }, 
+              "placeId": geocodeResult['placeId'] 
+            };
           CONFIGURATION['locations'].unshift(loc);
 
           var markers = locator.locations.map(function (location, index) {
